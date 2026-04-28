@@ -92,6 +92,4 @@ class CheckResult(Base):
 
     endpoint: Mapped["Endpoint"] = relationship("Endpoint", back_populates="check_results")
 
-    __table_args__ = (
-        Index("ix_check_results_endpoint_checked", "endpoint_id", "checked_at"),
-    )
+    __table_args__ = (Index("ix_check_results_endpoint_checked", "endpoint_id", "checked_at"),)
