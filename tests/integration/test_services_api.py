@@ -62,7 +62,7 @@ async def test_get_service_existing(client):
 async def test_get_service_missing(client):
     response = await client.get("/services/999999")
     assert response.status_code == 404
-    assert response.json()["detail"] == "Сервис не найден"
+    assert response.json()["detail"] == "Service not found"
 
 
 async def test_delete_service(client):
@@ -92,3 +92,101 @@ async def test_delete_service_cascades_endpoints(client):
     await client.delete(f"/services/{service_id}")
     fetch_endpoints = await client.get(f"/services/{service_id}/endpoints")
     assert fetch_endpoints.status_code == 404
+
+
+async def test_create_responsible_returns_201(client):
+    create = await client.post("/services", json={"name": "With Responsible"})
+    service_id = create.json()["id"]
+    response = await client.post(
+        f"/services/{service_id}/responsible",
+        json={"name": "Ivan Ivanov", "email": "ivanov@company.ru"},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["id"] > 0
+    assert body["service_id"] == service_id
+    assert body["name"] == "Ivan Ivanov"
+    assert body["email"] == "ivanov@company.ru"
+
+
+async def test_create_responsible_unknown_service(client):
+    response = await client.post(
+        "/services/99999/responsible",
+        json={"name": "Ivan", "email": "ivan@test.ru"},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Service not found"
+
+
+async def test_create_responsible_invalid_email(client):
+    create = await client.post("/services", json={"name": "Email Test"})
+    service_id = create.json()["id"]
+    response = await client.post(
+        f"/services/{service_id}/responsible",
+        json={"name": "Ivan", "email": "not-an-email"},
+    )
+    assert response.status_code == 422
+
+
+async def test_list_responsible_empty(client):
+    create = await client.post("/services", json={"name": "No Responsible"})
+    service_id = create.json()["id"]
+    response = await client.get(f"/services/{service_id}/responsible")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_list_responsible_unknown_service(client):
+    response = await client.get("/services/99999/responsible")
+    assert response.status_code == 404
+
+
+async def test_list_responsible_after_create(client):
+    create = await client.post("/services", json={"name": "R"})
+    service_id = create.json()["id"]
+    await client.post(
+        f"/services/{service_id}/responsible",
+        json={"name": "A", "email": "a@test.ru"},
+    )
+    await client.post(
+        f"/services/{service_id}/responsible",
+        json={"name": "B", "email": "b@test.ru"},
+    )
+    response = await client.get(f"/services/{service_id}/responsible")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 2
+    names = [r["name"] for r in body]
+    assert "A" in names and "B" in names
+
+
+async def test_delete_responsible(client):
+    create = await client.post("/services", json={"name": "Del Resp"})
+    service_id = create.json()["id"]
+    resp = await client.post(
+        f"/services/{service_id}/responsible",
+        json={"name": "ToDelete", "email": "del@test.ru"},
+    )
+    responsible_id = resp.json()["id"]
+    response = await client.delete(f"/responsible/{responsible_id}")
+    assert response.status_code == 204
+    listing = await client.get(f"/services/{service_id}/responsible")
+    assert all(r["id"] != responsible_id for r in listing.json())
+
+
+async def test_delete_responsible_twice_returns_404(client):
+    create = await client.post("/services", json={"name": "Del Twice"})
+    service_id = create.json()["id"]
+    resp = await client.post(
+        f"/services/{service_id}/responsible",
+        json={"name": "Once", "email": "once@test.ru"},
+    )
+    responsible_id = resp.json()["id"]
+    await client.delete(f"/responsible/{responsible_id}")
+    second = await client.delete(f"/responsible/{responsible_id}")
+    assert second.status_code == 404
+
+
+async def test_delete_responsible_missing(client):
+    response = await client.delete("/responsible/99999")
+    assert response.status_code == 404

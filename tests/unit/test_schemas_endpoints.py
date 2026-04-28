@@ -22,6 +22,21 @@ def test_endpoint_request_missing_url_fails():
         EndpointRequest()
 
 
+def test_endpoint_request_invalid_url_no_scheme():
+    with pytest.raises(ValidationError):
+        EndpointRequest(url="example.com/health")
+
+
+def test_endpoint_request_invalid_url_empty():
+    with pytest.raises(ValidationError):
+        EndpointRequest(url="   ")
+
+
+def test_endpoint_request_invalid_url_too_long():
+    with pytest.raises(ValidationError):
+        EndpointRequest(url="http://" + "a" * 2050)
+
+
 def test_endpoint_update_all_optional():
     req = EndpointUpdateRequest()
     assert req.url is None
@@ -32,6 +47,11 @@ def test_endpoint_update_partial():
     req = EndpointUpdateRequest(is_active=False)
     assert req.url is None
     assert req.is_active is False
+
+
+def test_endpoint_update_invalid_url():
+    with pytest.raises(ValidationError):
+        EndpointUpdateRequest(url="bad-url")
 
 
 def test_endpoint_response_serialization():

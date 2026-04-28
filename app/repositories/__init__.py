@@ -1,5 +1,6 @@
 from app.repositories.base import BaseRepository
 from app.repositories.endpoints import EndpointRepository
+from app.repositories.responsible import ResponsibleRepository
 from app.repositories.services import ServiceRepository
 
-__all__ = ["BaseRepository", "ServiceRepository", "EndpointRepository"]
+__all__ = ["BaseRepository", "ServiceRepository", "EndpointRepository", "ResponsibleRepository"]

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
-from app.api import endpoints, monitoring, reports, services
+from app.api import endpoints, monitoring, reports, responsible, services
 from app.scheduler import scheduler_manager
 
 logger = structlog.get_logger()
@@ -28,6 +28,7 @@ app.include_router(reports.router)
 app.include_router(services.router)
 app.include_router(monitoring.router)
 app.include_router(endpoints.router)
+app.include_router(responsible.router)
 
 
 @app.get("/health", tags=["system"])

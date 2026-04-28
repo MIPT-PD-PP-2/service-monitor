@@ -38,7 +38,7 @@ async def test_create_endpoint_unknown_service(client):
         json={"url": "http://example.com/health"},
     )
     assert response.status_code == 404
-    assert response.json()["detail"] == "Сервис не найден"
+    assert response.json()["detail"] == "Service not found"
 
 
 async def test_create_endpoint_invalid_url_no_scheme(client):
@@ -132,7 +132,7 @@ async def test_patch_endpoint_empty_body(client):
     endpoint_id = create.json()["id"]
     response = await client.patch(f"/endpoints/{endpoint_id}", json={})
     assert response.status_code == 422
-    assert response.json()["detail"] == "Нечего обновлять"
+    assert response.json()["detail"] == "No fields to update"
 
 
 async def test_patch_endpoint_invalid_url(client):
@@ -152,7 +152,7 @@ async def test_patch_endpoint_invalid_url(client):
 async def test_patch_endpoint_missing(client):
     response = await client.patch("/endpoints/99999", json={"is_active": False})
     assert response.status_code == 404
-    assert response.json()["detail"] == "Эндпоинт не найден"
+    assert response.json()["detail"] == "Endpoint not found"
 
 
 async def test_delete_endpoint(client):

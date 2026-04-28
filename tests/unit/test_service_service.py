@@ -3,7 +3,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.exceptions import NotFoundError, UnprocessableError
+from app.core.exceptions import NotFoundError
+from pydantic import ValidationError
+
 from app.schemas.services import ServiceRequest
 from app.services.service_service import ServiceService
 
@@ -26,26 +28,25 @@ def service():
 
 async def test_create_success(service):
     service.repo.create.return_value = _make_service()
-    result = await service.create(ServiceRequest(name="Payment", description="desc"))
-    assert result["id"] == 1
-    assert result["name"] == "Payment"
+    svc = await service.create(ServiceRequest(name="Payment", description="desc"))
+    assert svc.id == 1
+    assert svc.name == "Payment"
     service.repo.create.assert_awaited_once()
 
 
-async def test_create_empty_name_raises(service):
-    with pytest.raises(UnprocessableError) as exc:
-        await service.create(ServiceRequest(name="   "))
-    assert exc.value.status_code == 422
+async def test_create_empty_name_raises():
+    with pytest.raises(ValidationError):
+        ServiceRequest(name="   ")
 
 
-async def test_create_long_name_raises(service):
-    with pytest.raises(UnprocessableError):
-        await service.create(ServiceRequest(name="A" * 300))
+async def test_create_long_name_raises():
+    with pytest.raises(ValidationError):
+        ServiceRequest(name="A" * 300)
 
 
-async def test_create_long_description_raises(service):
-    with pytest.raises(UnprocessableError):
-        await service.create(ServiceRequest(name="ok", description="x" * 20_000))
+async def test_create_long_description_raises():
+    with pytest.raises(ValidationError):
+        ServiceRequest(name="ok", description="x" * 20_000)
 
 
 async def test_get_missing_raises_not_found(service):
@@ -55,11 +56,11 @@ async def test_get_missing_raises_not_found(service):
     assert exc.value.status_code == 404
 
 
-async def test_get_existing_returns_dict(service):
+async def test_get_existing_returns_service(service):
     service.repo.get_by_id.return_value = _make_service(service_id=5, name="Auth")
-    result = await service.get(5)
-    assert result["id"] == 5
-    assert result["name"] == "Auth"
+    svc = await service.get(5)
+    assert svc.id == 5
+    assert svc.name == "Auth"
 
 
 async def test_list_all_empty(service):
@@ -68,15 +69,15 @@ async def test_list_all_empty(service):
     assert result == []
 
 
-async def test_list_all_returns_dicts(service):
+async def test_list_all_returns_services(service):
     service.repo.list_all.return_value = [
         _make_service(service_id=1, name="A"),
         _make_service(service_id=2, name="B"),
     ]
     result = await service.list_all()
     assert len(result) == 2
-    assert result[0]["name"] == "A"
-    assert result[1]["name"] == "B"
+    assert result[0].name == "A"
+    assert result[1].name == "B"
 
 
 async def test_delete_missing_raises_not_found(service):

@@ -22,6 +22,21 @@ def test_service_request_missing_name_fails():
         ServiceRequest()
 
 
+def test_service_request_empty_name_fails():
+    with pytest.raises(ValidationError):
+        ServiceRequest(name="   ")
+
+
+def test_service_request_long_name_fails():
+    with pytest.raises(ValidationError):
+        ServiceRequest(name="A" * 300)
+
+
+def test_service_request_long_description_fails():
+    with pytest.raises(ValidationError):
+        ServiceRequest(name="ok", description="x" * 20_000)
+
+
 def test_service_response_serialization():
     now = datetime.now(timezone.utc)
     resp = ServiceResponse(

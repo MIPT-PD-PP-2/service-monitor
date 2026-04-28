@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Any
 
 from fastapi import APIRouter, Depends, status
 
@@ -14,7 +14,7 @@ async def update_endpoint(
     endpoint_id: int,
     data: EndpointUpdateRequest,
     endpoint: EndpointService = Depends(get_endpoint_service),
-) -> Dict:
+) -> Any:
     return await endpoint.update(endpoint_id, data)
 
 
