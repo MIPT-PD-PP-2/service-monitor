@@ -24,7 +24,7 @@ def test_sla_config_request_validation_max_fails():
         SlaConfigRequest(target_percent=105)
 
 
-def test_sla_config_response_serialization():
+def test_sla_config_response_with_id():
     resp = SlaConfigResponse(
         id=5,
         service_id=1,
@@ -34,3 +34,11 @@ def test_sla_config_response_serialization():
     assert dumped["id"] == 5
     assert dumped["service_id"] == 1
     assert dumped["target_percent"] == 99.0
+
+
+def test_sla_config_response_without_id():
+    resp = SlaConfigResponse(service_id=2, target_percent=95.0)
+    dumped = resp.model_dump()
+    assert dumped["id"] is None
+    assert dumped["service_id"] == 2
+    assert dumped["target_percent"] == 95.0

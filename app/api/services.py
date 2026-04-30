@@ -11,7 +11,7 @@ from app.api.deps import (
 from app.schemas.endpoints import EndpointRequest, EndpointResponse
 from app.schemas.responsible import ResponsibleRequest, ResponsibleResponse
 from app.schemas.services import ServiceRequest, ServiceResponse
-from app.schemas.sla_config import SlaConfigRequest, SlaConfigResponse
+from app.schemas.sla_config import DEFAULT_SLA_TARGET, SlaConfigRequest, SlaConfigResponse
 from app.services.endpoint_service import EndpointService
 from app.services.responsible_service import ResponsibleService
 from app.services.service_service import ServiceService
@@ -94,24 +94,26 @@ async def list_responsible(
 
 
 @router.get(
-    "/{service_id}/config",
+    "/{service_id}/sla-config",
     response_model=SlaConfigResponse
 )
 async def get_sla_config(
     service_id: int,
     sla_config: SlaConfigService = Depends(get_sla_config_service)
 ) -> Any:
-    return await sla_config.get_by_service_id(service_id)
+    config = await sla_config.get_by_service_id(service_id)
+    if config:
+        return config
+    return SlaConfigResponse(service_id=service_id, target_percent=DEFAULT_SLA_TARGET)
 
 
-@router.post(
+@router.put(
     "/{service_id}/sla-config",
     response_model=SlaConfigResponse,
-    status_code=status.HTTP_201_CREATED
 )
 async def set_sla_config(
     service_id: int,
     data: SlaConfigRequest,
     sla_config: SlaConfigService = Depends(get_sla_config_service)
 ) -> Any:
-    return await sla_config.create_for_service(service_id, data)
+    return await sla_config.upsert_for_service(service_id, data)
