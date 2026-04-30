@@ -190,3 +190,120 @@ async def test_delete_responsible_twice_returns_404(client):
 async def test_delete_responsible_missing(client):
     response = await client.delete("/responsible/99999")
     assert response.status_code == 404
+
+
+async def test_set_sla_config_returns_200(client):
+    create = await client.post("/services", json={"name": "SLA Service"})
+    service_id = create.json()["id"]
+    response = await client.put(
+        f"/services/{service_id}/sla-config",
+        json={"target_percent": 99.5},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] > 0
+    assert body["service_id"] == service_id
+    assert body["target_percent"] == 99.5
+
+
+async def test_set_sla_config_upsert_returns_200(client):
+    create = await client.post("/services", json={"name": "Upsert SLA"})
+    service_id = create.json()["id"]
+
+    first = await client.put(
+        f"/services/{service_id}/sla-config",
+        json={"target_percent": 95.0},
+    )
+    assert first.status_code == 200
+    assert first.json()["target_percent"] == 95.0
+
+    second = await client.put(
+        f"/services/{service_id}/sla-config",
+        json={"target_percent": 99.9},
+    )
+    assert second.status_code == 200
+    assert second.json()["target_percent"] == 99.9
+    assert second.json()["id"] == first.json()["id"]
+
+
+async def test_set_sla_config_empty_returns_200(client):
+    create = await client.post("/services", json={"name": "Default SLA"})
+    service_id = create.json()["id"]
+    response = await client.put(
+        f"/services/{service_id}/sla-config",
+        json={},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] > 0
+    assert body["service_id"] == service_id
+    assert body["target_percent"] == 99.0
+
+
+async def test_set_sla_config_unknown_service(client):
+    response = await client.put(
+        "/services/99999/sla-config",
+        json={"target_percent": 99.5},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Service not found"
+
+
+async def test_set_sla_config_invalid_target_below_min(client):
+    create_service = await client.post("/services", json={"name": "Invalid Min"})
+    service_id = create_service.json()["id"]
+
+    response = await client.put(
+        f"/services/{service_id}/sla-config",
+        json={"target_percent": -10},
+    )
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any("target_percent" in str(error) for error in errors)
+
+
+async def test_set_sla_config_invalid_target_above_max(client):
+    create_service = await client.post("/services", json={"name": "Invalid Max"})
+    service_id = create_service.json()["id"]
+
+    response = await client.put(
+        f"/services/{service_id}/sla-config",
+        json={"target_percent": 150},
+    )
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any("target_percent" in str(error) for error in errors)
+
+
+async def test_get_sla_config_exists(client):
+    create_service = await client.post("/services", json={"name": "Get SLA"})
+    service_id = create_service.json()["id"]
+
+    await client.put(
+        f"/services/{service_id}/sla-config",
+        json={"target_percent": 99.99},
+    )
+
+    response = await client.get(f"/services/{service_id}/sla-config")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["service_id"] == service_id
+    assert body["target_percent"] == 99.99
+
+
+async def test_get_sla_config_not_exists_returns_default(client):
+    create_service = await client.post("/services", json={"name": "No SLA Config"})
+    service_id = create_service.json()["id"]
+
+    response = await client.get(f"/services/{service_id}/sla-config")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["service_id"] == service_id
+    assert body["target_percent"] == 99.0
+    assert body["id"] is None
+
+
+async def test_get_sla_config_unknown_service_returns_404(client):
+    response = await client.get("/services/99999/sla-config")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Service not found"

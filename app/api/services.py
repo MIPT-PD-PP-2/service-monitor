@@ -6,13 +6,16 @@ from app.api.deps import (
     get_endpoint_service,
     get_responsible_service,
     get_service_service,
+    get_sla_config_service,
 )
 from app.schemas.endpoints import EndpointRequest, EndpointResponse
 from app.schemas.responsible import ResponsibleRequest, ResponsibleResponse
 from app.schemas.services import ServiceRequest, ServiceResponse
+from app.schemas.sla_config import DEFAULT_SLA_TARGET, SlaConfigRequest, SlaConfigResponse
 from app.services.endpoint_service import EndpointService
 from app.services.responsible_service import ResponsibleService
 from app.services.service_service import ServiceService
+from app.services.sla_config_service import SlaConfigService
 
 router = APIRouter(prefix="/services", tags=["services"])
 
@@ -88,3 +91,29 @@ async def list_responsible(
     responsible: ResponsibleService = Depends(get_responsible_service),
 ) -> Any:
     return await responsible.list_for_service(service_id)
+
+
+@router.get(
+    "/{service_id}/sla-config",
+    response_model=SlaConfigResponse
+)
+async def get_sla_config(
+    service_id: int,
+    sla_config: SlaConfigService = Depends(get_sla_config_service)
+) -> Any:
+    config = await sla_config.get_by_service_id(service_id)
+    if config:
+        return config
+    return SlaConfigResponse(service_id=service_id, target_percent=DEFAULT_SLA_TARGET)
+
+
+@router.put(
+    "/{service_id}/sla-config",
+    response_model=SlaConfigResponse,
+)
+async def set_sla_config(
+    service_id: int,
+    data: SlaConfigRequest,
+    sla_config: SlaConfigService = Depends(get_sla_config_service)
+) -> Any:
+    return await sla_config.upsert_for_service(service_id, data)
