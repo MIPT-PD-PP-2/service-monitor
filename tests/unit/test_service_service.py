@@ -2,10 +2,9 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
-
-from app.core.exceptions import NotFoundError
 from pydantic import ValidationError
 
+from app.core.exceptions import NotFoundError
 from app.schemas.services import ServiceRequest
 from app.services.service_service import ServiceService
 
