@@ -307,3 +307,71 @@ async def test_get_sla_config_unknown_service_returns_404(client):
     response = await client.get("/services/99999/sla-config")
     assert response.status_code == 404
     assert response.json()["detail"] == "Service not found"
+
+
+async def test_create_endpoint_success(client):
+    create_service = await client.post("/services", json={"name": "Endpoint Test"})
+    service_id = create_service.json()["id"]
+    
+    response = await client.post(
+        f"/services/{service_id}/endpoints",
+        json={"url": "https://api.example.com/health", "is_active": True},
+    )
+    
+    assert response.status_code == 201
+    body = response.json()
+    assert body["id"] > 0
+    assert body["service_id"] == service_id
+    assert body["url"] == "https://api.example.com/health"
+    assert body["is_active"] is True
+
+
+async def test_create_endpoint_invalid_url(client):
+    create_service = await client.post("/services", json={"name": "Invalid URL Test"})
+    service_id = create_service.json()["id"]
+    
+    response = await client.post(
+        f"/services/{service_id}/endpoints",
+        json={"url": "ftp://invalid.url", "is_active": True},
+    )
+    
+    assert response.status_code == 422
+
+
+async def test_create_endpoint_empty_url(client):
+    create_service = await client.post("/services", json={"name": "Empty URL Test"})
+    service_id = create_service.json()["id"]
+    
+    response = await client.post(
+        f"/services/{service_id}/endpoints",
+        json={"url": "", "is_active": True},
+    )
+    
+    assert response.status_code == 422
+
+
+async def test_create_endpoint_to_nonexistent_service(client):
+    response = await client.post(
+        "/services/99999/endpoints",
+        json={"url": "https://api.example.com/health"},
+    )
+    
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Service not found"
+
+
+async def test_list_endpoints_empty(client):
+    create_service = await client.post("/services", json={"name": "Empty Endpoints"})
+    service_id = create_service.json()["id"]
+    
+    response = await client.get(f"/services/{service_id}/endpoints")
+    
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_list_endpoints_unknown_service(client):
+    response = await client.get("/services/99999/endpoints")
+    
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Service not found"
