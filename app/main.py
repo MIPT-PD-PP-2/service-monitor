@@ -12,9 +12,14 @@ logger = structlog.get_logger()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    await scheduler_manager.start()
-    yield
-    await scheduler_manager.stop()
+    try:
+        await scheduler_manager.initialize_scheduler_jobs()
+        await scheduler_manager.start()
+        yield
+    except Exception as e:
+        logger.error(f"scheduler_initialization_error: {e}")
+    finally:
+        await scheduler_manager.stop()
 
 
 app = FastAPI(
