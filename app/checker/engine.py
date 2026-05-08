@@ -14,6 +14,7 @@ logger = structlog.get_logger()
 
 
 class CheckEngine:
+
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = CheckResultsRepository(db)
