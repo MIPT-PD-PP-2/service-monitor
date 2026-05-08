@@ -1,12 +1,13 @@
-import asyncio
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+from collections.abc import Callable
+
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 from apscheduler.job import Job
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.scheduler.scheduler import SchedulerManager, check_engine
-from app.db.database import AsyncSessionLocal
 from app.repositories.endpoints import EndpointRepository
 
 
@@ -64,7 +65,7 @@ async def test_stop_scheduler_not_running(scheduler_manager, mock_scheduler):
 
 @pytest.mark.asyncio
 async def test_add_periodic_job(scheduler_manager, mock_scheduler):
-    mock_func = AsyncMock()
+    mock_func: Callable = AsyncMock()
     scheduler_manager.add_periodic_job(mock_func, "test_job", 30)
 
     assert mock_scheduler.add_job.called
@@ -89,9 +90,14 @@ async def test_remove_job_not_exists(scheduler_manager, mock_scheduler):
 
 @pytest.mark.asyncio
 async def test_get_count_jobs(scheduler_manager, mock_scheduler):
-    job1 = MagicMock(spec=Job)
-    job2 = MagicMock(spec=Job)
-    mock_scheduler.get_jobs.return_value = [job1, job2]
+    # Только задачи с префиксом check_endpoint_ должны учитываться
+    check_job1 = MagicMock(spec=Job)
+    check_job1.id = "check_endpoint_1"
+    check_job2 = MagicMock(spec=Job)
+    check_job2.id = "check_endpoint_2"
+    other_job = MagicMock(spec=Job)
+    other_job.id = "other_job"
+    mock_scheduler.get_jobs.return_value = [check_job1, check_job2, other_job]
 
     count = scheduler_manager.get_count_jobs()
 
@@ -165,8 +171,11 @@ async def test_trigger_now(scheduler_manager, mock_scheduler):
     scheduler_manager.trigger_now()
 
     mock_scheduler.get_jobs.assert_called_once()
-    job1.modify.assert_called_once_with(next_run_time=None)
-    job2.modify.assert_called_once_with(next_run_time=None)
+    # trigger_now теперь передаёт datetime вместо None
+    call_args1 = job1.modify.call_args
+    call_args2 = job2.modify.call_args
+    assert isinstance(call_args1[1]["next_run_time"], datetime)
+    assert isinstance(call_args2[1]["next_run_time"], datetime)
 
 
 @pytest.mark.asyncio
@@ -180,12 +189,10 @@ async def test_get_next_run_time_no_jobs(scheduler_manager, mock_scheduler):
 
 @pytest.mark.asyncio
 async def test_get_next_run_time_with_jobs(scheduler_manager, mock_scheduler):
-    from datetime import datetime, timedelta
-
     job1 = MagicMock(spec=Job)
-    job1.next_run_time = datetime.now() + timedelta(minutes=5)
+    job1.next_run_time = datetime.now(timezone.utc) + timedelta(minutes=5)
     job2 = MagicMock(spec=Job)
-    job2.next_run_time = datetime.now() + timedelta(minutes=3)
+    job2.next_run_time = datetime.now(timezone.utc) + timedelta(minutes=3)
     job3 = MagicMock(spec=Job)
     job3.next_run_time = None
 

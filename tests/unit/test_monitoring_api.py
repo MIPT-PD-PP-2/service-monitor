@@ -3,7 +3,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.scheduler.scheduler import scheduler_manager
 
 
 @pytest.fixture

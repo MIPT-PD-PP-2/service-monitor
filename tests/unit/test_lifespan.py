@@ -17,14 +17,16 @@ def mock_scheduler_manager():
 
 
 @pytest.mark.asyncio
-async def test_lifespan_calls_scheduler_initialization_start_stop(mock_app, mock_scheduler_manager):
+async def test_lifespan_calls_scheduler_initialization_start_stop(
+    mock_app, mock_scheduler_manager
+):
     mock_scheduler_manager.initialize_scheduler_jobs = AsyncMock()
     mock_scheduler_manager.start = AsyncMock()
     mock_scheduler_manager.stop = AsyncMock()
 
     app = FastAPI()
 
-    async with lifespan(app) as context:
+    async with lifespan(app):
         pass
 
     mock_scheduler_manager.initialize_scheduler_jobs.assert_called_once()
@@ -44,7 +46,7 @@ async def test_lifespan_handles_initialization_error():
         app = FastAPI()
 
         with pytest.raises(RuntimeError):
-            async with lifespan(app) as context:
+            async with lifespan(app):
                 pass
 
         mock_scheduler.stop.assert_awaited_once()
