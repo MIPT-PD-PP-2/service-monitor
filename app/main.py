@@ -1,20 +1,20 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-import structlog
 from fastapi import FastAPI
 
 from app.api import endpoints, monitoring, reports, responsible, services
 from app.scheduler import scheduler_manager
 
-logger = structlog.get_logger()
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    await scheduler_manager.initialize_scheduler_jobs()
     await scheduler_manager.start()
-    yield
-    await scheduler_manager.stop()
+    try:
+        yield
+    finally:
+        await scheduler_manager.stop()
 
 
 app = FastAPI(

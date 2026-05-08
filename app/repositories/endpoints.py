@@ -13,3 +13,9 @@ class EndpointRepository(BaseRepository[Endpoint]):
         query = select(Endpoint).where(Endpoint.service_id == service_id).order_by(Endpoint.id)
         result = await self.db.execute(query)
         return list(result.scalars().all())
+
+    # Получение списка активных эндпоинтов
+    async def get_active_endpoints(self) -> list[Endpoint]:
+        query = select(Endpoint).where(Endpoint.is_active.is_(True)).order_by(Endpoint.id)
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
