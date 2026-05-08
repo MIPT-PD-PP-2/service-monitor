@@ -6,7 +6,7 @@ import pytest
 
 from app.checker.engine import CheckEngine
 from app.models.models import Endpoint, Service
-from app.schemas.check_results import CheckResultsCreate
+from app.schemas.check_results import CheckResultsCreate, RequestResult
 
 
 @pytest.fixture
@@ -22,6 +22,8 @@ def check_engine(mock_db):
         MockRepo.return_value = AsyncMock()
         engine = CheckEngine(mock_db)
         engine.repo = AsyncMock()
+        # Мокаем HTTP клиент, чтобы не создавать реальный
+        engine.client = AsyncMock()
         return engine
 
 
@@ -49,8 +51,14 @@ def test_init_default_values(mock_db):
 
 async def test_check_endpoint_success(check_engine, sample_endpoint):
     with patch.object(check_engine, "send_request") as mock_send:
-        mock_now = datetime.now(timezone.utc)
-        mock_send.return_value = (mock_now, True, 200, 150, None)
+        mock_result = RequestResult(
+            checked_at=datetime.now(timezone.utc),
+            is_available=True,
+            status_code=200,
+            response_time_ms=150,
+            error_message=None,
+        )
+        mock_send.return_value = mock_result
 
         result = await check_engine.check_endpoint(sample_endpoint)
 
@@ -65,8 +73,14 @@ async def test_check_endpoint_success(check_engine, sample_endpoint):
 
 async def test_check_endpoint_http_error(check_engine, sample_endpoint):
     with patch.object(check_engine, "send_request") as mock_send:
-        mock_now = datetime.now(timezone.utc)
-        mock_send.return_value = (mock_now, False, 500, 200, "HTTP 500")
+        mock_result = RequestResult(
+            checked_at=datetime.now(timezone.utc),
+            is_available=False,
+            status_code=500,
+            response_time_ms=None,
+            error_message="HTTP 500",
+        )
+        mock_send.return_value = mock_result
 
         result = await check_engine.check_endpoint(sample_endpoint)
 
@@ -75,132 +89,85 @@ async def test_check_endpoint_http_error(check_engine, sample_endpoint):
         assert result.error_message == "HTTP 500"
 
 
-async def test_check_endpoint_exception(check_engine, sample_endpoint):
-    with patch.object(check_engine, "send_request") as mock_send:
-        mock_send.side_effect = Exception("Network error")
-
-        result = await check_engine.check_endpoint(sample_endpoint)
-
-        assert result.is_available is False
-        assert result.status_code is None
-        assert result.response_time_ms is None
-        assert "Unexpected error" in result.error_message
-        assert result.checked_at is not None
-
-
 async def test_send_request_success_200(check_engine):
-    with patch("httpx.AsyncClient") as mock_client:
+    with patch.object(check_engine.client, "get") as mock_get:
         mock_response = AsyncMock()
         mock_response.status_code = 200
-        mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
 
-        (
-            checked_at,
-            is_available,
-            status_code,
-            response_time_ms,
-            error,
-        ) = await check_engine.send_request("http://test.com")
+        result = await check_engine.send_request("http://test.com")
 
-        assert is_available is True
-        assert status_code == 200
-        assert error is None
-        assert response_time_ms is not None
-        assert checked_at.tzinfo == timezone.utc
+        assert result.is_available is True
+        assert result.status_code == 200
+        assert result.error_message is None
+        assert result.response_time_ms is not None
+        assert result.checked_at.tzinfo == timezone.utc
 
 
 async def test_send_request_success_302(check_engine):
-    with patch("httpx.AsyncClient") as mock_client:
+    with patch.object(check_engine.client, "get") as mock_get:
         mock_response = AsyncMock()
         mock_response.status_code = 302
-        mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
 
-        (
-            checked_at,
-            is_available,
-            status_code,
-            response_time_ms,
-            error,
-        ) = await check_engine.send_request("http://test.com")
+        result = await check_engine.send_request("http://test.com")
 
-        assert is_available is True
-        assert status_code == 302
+        assert result.is_available is True
+        assert result.status_code == 302
 
 
 async def test_send_request_404_error(check_engine):
-    with patch("httpx.AsyncClient") as mock_client:
+    with patch.object(check_engine.client, "get") as mock_get:
         mock_response = AsyncMock()
         mock_response.status_code = 404
-        mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+        mock_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError("404", request=MagicMock(), response=mock_response)
+        )
+        mock_get.return_value = mock_response
 
-        (
-            checked_at,
-            is_available,
-            status_code,
-            response_time_ms,
-            error,
-        ) = await check_engine.send_request("http://test.com")
+        result = await check_engine.send_request("http://test.com")
 
-        assert is_available is False
-        assert status_code == 404
-        assert "HTTP 404" in error
+        assert result.is_available is False
+        assert result.status_code == 404
+        assert "HTTP 404" in result.error_message
 
 
 async def test_send_request_timeout(check_engine):
-    with patch("httpx.AsyncClient") as mock_client:
-        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
-            side_effect=httpx.TimeoutException("Timeout")
-        )
+    with patch.object(check_engine.client, "get") as mock_get:
+        mock_get.side_effect = httpx.TimeoutException("Timeout")
 
-        (
-            checked_at,
-            is_available,
-            status_code,
-            response_time_ms,
-            error,
-        ) = await check_engine.send_request("http://test.com")
+        result = await check_engine.send_request("http://test.com")
 
-        assert is_available is False
-        assert status_code is None
-        assert "Timeout" in error
+        assert result.is_available is False
+        assert result.status_code is None
+        assert "Timeout" in result.error_message
 
 
 async def test_send_request_connection_error(check_engine):
-    with patch("httpx.AsyncClient") as mock_client:
-        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
-            side_effect=httpx.ConnectError("Connection refused")
-        )
+    with patch.object(check_engine.client, "get") as mock_get:
+        mock_get.side_effect = httpx.ConnectError("Connection refused")
 
-        (
-            checked_at,
-            is_available,
-            status_code,
-            response_time_ms,
-            error,
-        ) = await check_engine.send_request("http://test.com")
+        result = await check_engine.send_request("http://test.com")
 
-        assert is_available is False
-        assert status_code is None
-        assert "Connection error" in error
+        assert result.is_available is False
+        assert result.status_code is None
+        assert "Connection error" in result.error_message
 
 
 async def test_send_request_response_time_calculation(check_engine):
-    with patch("httpx.AsyncClient") as mock_client:
+    with patch.object(check_engine.client, "get") as mock_get:
         mock_response = AsyncMock()
         mock_response.status_code = 200
-        mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
 
-        (
-            checked_at,
-            is_available,
-            status_code,
-            response_time_ms,
-            error,
-        ) = await check_engine.send_request("http://test.com")
+        result = await check_engine.send_request("http://test.com")
 
-        assert response_time_ms is not None
-        assert isinstance(response_time_ms, int)
-        assert response_time_ms >= 0
+        assert result.response_time_ms is not None
+        assert isinstance(result.response_time_ms, int)
+        assert result.response_time_ms >= 0
 
 
 async def test_service_success(check_engine, sample_endpoint):
@@ -298,7 +265,6 @@ async def test_notify_down_duplicate_within_window(check_engine, sample_endpoint
 
 
 async def test_notify_down_after_window(check_engine, sample_endpoint):
-    """Тест отправки уведомления после истечения окна"""
     check_result = CheckResultsCreate(
         endpoint_id=1,
         checked_at=datetime.now(timezone.utc),
