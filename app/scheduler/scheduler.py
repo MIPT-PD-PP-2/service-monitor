@@ -9,15 +9,17 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.checker.engine import CheckEngine
 from app.config import settings
 from app.db.database import AsyncSessionLocal
+from app.models.models import Endpoint
 from app.repositories import EndpointRepository
 
 logger = structlog.get_logger()
-check_engine = CheckEngine()
 
 
 class SchedulerManager:
     def __init__(self) -> None:
         self._scheduler = AsyncIOScheduler()
+        self._engine = None
+        self._session = None
 
     def is_running(self) -> bool:
         return self._scheduler.running
@@ -35,6 +37,14 @@ class SchedulerManager:
         if not self._scheduler.running:
             return
         self._scheduler.shutdown(wait=False)
+
+        if self._engine:
+            await self._engine.close()
+            self._engine = None
+
+        if self._session:
+            await self._session.close()
+            self._session = None
         logger.info("scheduler_stopped")
 
     # Немедленный запуск всех задач проверок
@@ -75,26 +85,28 @@ class SchedulerManager:
 
     # Инициализация списка задач — проверок активных эндпоинтов
     async def initialize_scheduler_jobs(self) -> None:
-        async with AsyncSessionLocal() as session:
-            endpoint_repo = EndpointRepository(session)
-            active_endpoints = await endpoint_repo.get_active_endpoints()
+        self._session = AsyncSessionLocal()
+        self._engine = CheckEngine(self._session)
 
-            for endpoint in active_endpoints:
+        endpoint_repo = EndpointRepository(self._session)
+        active_endpoints = await endpoint_repo.get_active_endpoints()
 
-                def make_check_job(endpoint_id: int = endpoint.id) -> Callable:
-                    async def check_job() -> None:
-                        await check_engine.check_endpoint(endpoint_id)
-                    return check_job
+        for endpoint in active_endpoints:
 
-                check_job_func = make_check_job()
+            def make_check_job(endpoint: Endpoint) -> Callable:
+                async def check_job() -> None:
+                    await self._engine.service(endpoint)
+                return check_job
 
-                self.add_periodic_job(
-                    func=check_job_func,
-                    job_id=f"check_endpoint_{endpoint.id}",
-                    interval_seconds=self.get_interval(),
-                )
+            check_job_func = make_check_job(endpoint)
 
-            logger.info("active_endpoints_registered", count=len(active_endpoints))
+            self.add_periodic_job(
+                func=check_job_func,
+                job_id=f"check_endpoint_{endpoint.id}",
+                interval_seconds=self.get_interval(),
+            )
+
+        logger.info("active_endpoints_registered", count=len(active_endpoints))
 
 
 scheduler_manager = SchedulerManager()
