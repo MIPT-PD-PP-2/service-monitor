@@ -1,4 +1,3 @@
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Dict
 
@@ -6,6 +5,7 @@ import httpx
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.models import Endpoint
 from app.repositories.check_results import CheckResultsRepository
 from app.schemas.check_results import CheckResultsCreate, CheckResultsResponse, RequestResult
@@ -19,12 +19,13 @@ class CheckEngine:
         self.db = db
         self.repo = CheckResultsRepository(db)
 
-        self.CHECKER_TIMEOUT_SECONDS = int(os.getenv("CHECKER_TIMEOUT_SECONDS", "10"))
-        self.NOTIFY_REPEAT_MINUTES = int(os.getenv("NOTIFY_REPEAT_MINUTES", 30))
+        self._checker_timeout = settings.checker_timeout_seconds
+        self._notify_repeat_minutes = settings.notify_repeat_minutes
 
         self.client = httpx.AsyncClient(
-                    timeout=self.CHECKER_TIMEOUT_SECONDS,
-                    follow_redirects=True)
+            timeout=float(self._checker_timeout),
+            follow_redirects=True,
+        )
         logger.info("HTTP client started")
 
         self.last_down_time: Dict[int, datetime] = {}
@@ -101,7 +102,7 @@ class CheckEngine:
             should_notify = True
         else:
             time_diff = time_now - last_down
-            if time_diff > timedelta(minutes=self.NOTIFY_REPEAT_MINUTES):
+            if time_diff > timedelta(minutes=self._notify_repeat_minutes):
                 should_notify = True
 
         if should_notify:
@@ -199,29 +200,20 @@ class CheckEngine:
     ) -> RequestResult:
 
         start_time = datetime.now(timezone.utc)
+        response_time_ms: int | None = None
+        response: httpx.Response | None = None
 
         try:
             response = await self.client.get(url)
             end_time = datetime.now(timezone.utc)
-
             response_time_ms = int((end_time - start_time).total_seconds() * 1000)
-            response.raise_for_status()
-
-            return RequestResult(
-                checked_at=start_time,
-                is_available=True,
-                status_code=response.status_code,
-                response_time_ms=response_time_ms,
-                error_message=None,
-                )
-
         except httpx.TimeoutException:
             return RequestResult(
                 checked_at=start_time,
                 is_available=False,
                 status_code=None,
                 response_time_ms=None,
-                error_message=f"Timeout after {self.CHECKER_TIMEOUT_SECONDS} seconds",
+                error_message=f"Timeout after {self._checker_timeout} seconds",
             )
         except httpx.ConnectError as e:
             return RequestResult(
@@ -230,14 +222,6 @@ class CheckEngine:
                 status_code=None,
                 response_time_ms=None,
                 error_message=f"Connection error: {str(e)}",
-            )
-        except httpx.HTTPStatusError as e:
-            return RequestResult(
-                checked_at=start_time,
-                is_available=False,
-                status_code=e.response.status_code,
-                response_time_ms=None,
-                error_message=f"HTTP {e.response.status_code}",
             )
         except httpx.RequestError as e:
             return RequestResult(
@@ -254,4 +238,22 @@ class CheckEngine:
                 status_code=None,
                 response_time_ms=None,
                 error_message=f"Unexpected error {str(e)}",
+            )
+
+        try:
+            response.raise_for_status()
+            return RequestResult(
+                checked_at=start_time,
+                is_available=True,
+                status_code=response.status_code,
+                response_time_ms=response_time_ms,
+                error_message=None,
+            )
+        except httpx.HTTPStatusError as e:
+            return RequestResult(
+                checked_at=start_time,
+                is_available=False,
+                status_code=e.response.status_code,
+                response_time_ms=response_time_ms,
+                error_message=f"HTTP {e.response.status_code}",
             )

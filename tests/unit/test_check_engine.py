@@ -44,8 +44,8 @@ def sample_endpoint():
 
 def test_init_default_values(mock_db):
     engine = CheckEngine(mock_db)
-    assert engine.CHECKER_TIMEOUT_SECONDS == 10
-    assert engine.NOTIFY_REPEAT_MINUTES == 30
+    assert engine._checker_timeout == 10
+    assert engine._notify_repeat_minutes == 30
     assert engine.last_down_time == {}
 
 
@@ -132,6 +132,7 @@ async def test_send_request_404_error(check_engine):
         assert result.is_available is False
         assert result.status_code == 404
         assert "HTTP 404" in result.error_message
+        assert result.response_time_ms is not None
 
 
 async def test_send_request_timeout(check_engine):
