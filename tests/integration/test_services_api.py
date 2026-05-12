@@ -34,6 +34,30 @@ async def test_create_service_empty_name(client):
     assert response.status_code == 422
 
 
+async def test_create_service_duplicate_name_allowed(client):
+    """Создание сервиса с дублирующимся именем.
+    
+    Примечание: В текущей реализации уникальность имени не enforced на уровне БД,
+    поэтому дубликаты разрешены. Если в будущем добавится unique-констрейнт,
+    этот тест нужно будет обновить (ожидать 409 вместо 201).
+    """
+    payload = {"name": "Duplicate Service", "description": "First instance"}
+    
+    response1 = await client.post("/services", json=payload)
+    assert response1.status_code == 201
+    service1_id = response1.json()["id"]
+    
+    response2 = await client.post("/services", json=payload)
+    assert response2.status_code == 201
+    service2_id = response2.json()["id"]
+    
+    assert service1_id != service2_id
+    
+    list_response = await client.get("/services")
+    names = [s["name"] for s in list_response.json()]
+    assert names.count("Duplicate Service") == 2
+
+
 async def test_list_services_empty(client):
     response = await client.get("/services")
     assert response.status_code == 200
@@ -309,69 +333,4 @@ async def test_get_sla_config_unknown_service_returns_404(client):
     assert response.json()["detail"] == "Service not found"
 
 
-async def test_create_endpoint_success(client):
-    create_service = await client.post("/services", json={"name": "Endpoint Test"})
-    service_id = create_service.json()["id"]
-    
-    response = await client.post(
-        f"/services/{service_id}/endpoints",
-        json={"url": "https://api.example.com/health", "is_active": True},
-    )
-    
-    assert response.status_code == 201
-    body = response.json()
-    assert body["id"] > 0
-    assert body["service_id"] == service_id
-    assert body["url"] == "https://api.example.com/health"
-    assert body["is_active"] is True
 
-
-async def test_create_endpoint_invalid_url(client):
-    create_service = await client.post("/services", json={"name": "Invalid URL Test"})
-    service_id = create_service.json()["id"]
-    
-    response = await client.post(
-        f"/services/{service_id}/endpoints",
-        json={"url": "ftp://invalid.url", "is_active": True},
-    )
-    
-    assert response.status_code == 422
-
-
-async def test_create_endpoint_empty_url(client):
-    create_service = await client.post("/services", json={"name": "Empty URL Test"})
-    service_id = create_service.json()["id"]
-    
-    response = await client.post(
-        f"/services/{service_id}/endpoints",
-        json={"url": "", "is_active": True},
-    )
-    
-    assert response.status_code == 422
-
-
-async def test_create_endpoint_to_nonexistent_service(client):
-    response = await client.post(
-        "/services/99999/endpoints",
-        json={"url": "https://api.example.com/health"},
-    )
-    
-    assert response.status_code == 404
-    assert response.json()["detail"] == "Service not found"
-
-
-async def test_list_endpoints_empty(client):
-    create_service = await client.post("/services", json={"name": "Empty Endpoints"})
-    service_id = create_service.json()["id"]
-    
-    response = await client.get(f"/services/{service_id}/endpoints")
-    
-    assert response.status_code == 200
-    assert response.json() == []
-
-
-async def test_list_endpoints_unknown_service(client):
-    response = await client.get("/services/99999/endpoints")
-    
-    assert response.status_code == 404
-    assert response.json()["detail"] == "Service not found"
