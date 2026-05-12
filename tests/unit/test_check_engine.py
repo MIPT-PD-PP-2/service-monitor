@@ -6,7 +6,7 @@ import pytest
 
 from app.checker.engine import CheckEngine
 from app.models.models import Endpoint, Service
-from app.schemas.check_results import CheckResultsCreate, RequestResult
+from app.schemas.check_results import CheckResultsCreate, CheckResultsResponse, RequestResult
 
 
 @pytest.fixture
@@ -181,8 +181,14 @@ async def test_service_success(check_engine, sample_endpoint):
         error_message=None,
     )
 
-    mock_db_result = MagicMock()
+    mock_db_result = MagicMock(spec=CheckResultsResponse)
     mock_db_result.id = 1
+    mock_db_result.endpoint_id = 1
+    mock_db_result.checked_at = datetime.now(timezone.utc)
+    mock_db_result.is_available = True
+    mock_db_result.status_code = 200
+    mock_db_result.response_time_ms = 150
+    mock_db_result.error_message = None
 
     with patch.object(check_engine, "check_endpoint", return_value=mock_check_result):
         with patch.object(check_engine.repo, "create", return_value=mock_db_result):
@@ -191,7 +197,7 @@ async def test_service_success(check_engine, sample_endpoint):
 
                 assert result == mock_db_result
                 check_engine.repo.create.assert_called_once()
-                mock_notify.assert_called_once_with(sample_endpoint, mock_check_result)
+                mock_notify.assert_called_once_with(sample_endpoint, mock_db_result)
 
 
 async def test_handle_notification_down(check_engine, sample_endpoint):
