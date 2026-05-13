@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Dict
+from typing import Dict, List
 
 import httpx
 import structlog
@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.models import Endpoint
+from app.notifier.notifier import Notifier
 from app.repositories.check_results import CheckResultsRepository
+from app.repositories.responsible import ResponsibleRepository
+from app.repositories.services import ServiceRepository
 from app.schemas.check_results import CheckResultsCreate, CheckResultsResponse, RequestResult
 
 logger = structlog.get_logger()
@@ -18,6 +21,9 @@ class CheckEngine:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = CheckResultsRepository(db)
+        self.responsible_repo = ResponsibleRepository(db)
+        self.service_repo = ServiceRepository(db)
+        self.notifier = Notifier()
 
         self._checker_timeout = settings.checker_timeout_seconds
         self._notify_repeat_minutes = settings.notify_repeat_minutes
@@ -70,7 +76,7 @@ class CheckEngine:
             error_message=check_results.error_message,
         )
 
-        await self.handle_notification(endpoint, check_results)
+        await self.handle_notification(endpoint, res)
 
         return res
 
@@ -78,7 +84,7 @@ class CheckEngine:
     async def handle_notification(
         self,
         endpoint: Endpoint,
-        check_results: CheckResultsCreate
+        check_results: CheckResultsResponse
         ) -> None:
 
         if not check_results.is_available:
@@ -90,7 +96,7 @@ class CheckEngine:
     async def notify_if_needed(
         self,
         endpoint: Endpoint,
-        check_results: CheckResultsCreate
+        check_results: CheckResultsResponse
         ) -> None:
 
         time_now = datetime.now(timezone.utc)
@@ -109,7 +115,7 @@ class CheckEngine:
             await self.send_to_notifier(endpoint, check_results, status="DOWN")
             self.last_down_time[endpoint.id] = time_now
             logger.info(
-                "DOWN notification sent",
+                "DOWN notification sent to notifier",
                 endpoint_id=endpoint.id,
                 url=endpoint.url,
                 time_since_last=time_diff if last_down else None,
@@ -126,33 +132,68 @@ class CheckEngine:
     async def check_after_recovery(
         self,
         endpoint: Endpoint,
-        check_results: CheckResultsCreate
+        check_results: CheckResultsResponse
         ) -> None:
 
         if endpoint.id in self.last_down_time:
             await self.send_to_notifier(endpoint, check_results, status="UP")
             del self.last_down_time[endpoint.id]
             logger.info(
-                "UP notification sent",
+                "UP notification sent to notifier",
                 endpoint_id=endpoint.id,
                 url=endpoint.url,
             )
 
 
-    # Заглушка для отправки уведомлений
     async def send_to_notifier(
         self,
         endpoint: Endpoint,
-        check_results: CheckResultsCreate, status: str
-    ):
-        logger.info(
-            "would_send_notification",
-            status=status,
-            endpoint_id=endpoint.id,
-            service_name=endpoint.service.name if endpoint.service else "Unknown",
-            url=endpoint.url,
-            error=check_results.error_message,
+        check_results: CheckResultsResponse,
+        status: str,
+    ) -> None:
+        service_name = await self.get_service_name(endpoint.service_id)
+        responsible_list = await self.get_responsible_email(endpoint.service_id)
+
+        if not responsible_list:
+            logger.warning(
+                "Responsible is empty, email sending is impossible",
+                status=status,
+                endpoint_id=endpoint.id,
+                service_name=service_name
+            )
+            return
+
+        res = await self.notifier.send_notification(
+            endpoint,
+            check_results,
+            status,
+            service_name,
+            responsible_list)
+
+        logger.debug(
+            "Notifier finished",
+            result=res
         )
+
+
+    async def get_responsible_email(
+        self,
+        service_id: int
+    ) -> List[str]:
+        responsible_list = await self.responsible_repo.list_by_service(service_id)
+
+        return [r.email for r in responsible_list] if responsible_list else []
+
+
+    async def get_service_name(
+        self,
+        service_id: int
+    ) -> str:
+        service = await self.service_repo.get_by_id(service_id)
+        if not service:
+            logger.warning("Service not found", service_id=service_id)
+            return "Unknown Service"
+        return service.name
 
 
     async def check_endpoint(
