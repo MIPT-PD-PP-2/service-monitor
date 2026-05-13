@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -9,11 +10,15 @@ from app.models.models import Endpoint, Service
 from app.notifier.notifier import Notifier
 from app.schemas.check_results import CheckResultsResponse
 
+RUNNING_IN_DOCKER = os.path.exists("/.dockerenv")
+MAILHOG_HOST = "mailhog" if RUNNING_IN_DOCKER else "127.0.0.1"
+MAILHOG_API_URL = f"http://{MAILHOG_HOST}:8025"
+
 
 @pytest.fixture
 def notifier():
     with patch("app.notifier.notifier.settings") as mock_settings:
-        mock_settings.smtp_host = "127.0.0.1"
+        mock_settings.smtp_host = MAILHOG_HOST
         mock_settings.smtp_port = 1025
         mock_settings.smtp_from = "monitoring@company.ru"
         mock_settings.smtp_user = ""
@@ -109,7 +114,7 @@ async def test_send_notification_to_multiple_recipients(
 async def test_mailhog_received_emails(notifier, mock_endpoint, check_result):
 
     async with httpx.AsyncClient() as mailhog_client:
-        await mailhog_client.delete("http://localhost:8025/api/v1/messages")
+        await mailhog_client.delete(f"{MAILHOG_API_URL}/api/v1/messages")
 
     responsible_list = ["test@example.com"]
     service_name = "Test Service"
@@ -125,7 +130,7 @@ async def test_mailhog_received_emails(notifier, mock_endpoint, check_result):
     await asyncio.sleep(1)
 
     async with httpx.AsyncClient() as mailhog_client:
-        response = await mailhog_client.get("http://localhost:8025/api/v2/messages")
+        response = await mailhog_client.get(f"{MAILHOG_API_URL}/api/v2/messages")
         assert response.status_code == 200
 
         messages = response.json()

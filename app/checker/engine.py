@@ -3,9 +3,9 @@ from typing import Dict, List
 
 import httpx
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.db.database import AsyncSessionLocal
 from app.models.models import Endpoint
 from app.notifier.notifier import Notifier
 from app.repositories.check_results import CheckResultsRepository
@@ -18,11 +18,7 @@ logger = structlog.get_logger()
 
 class CheckEngine:
 
-    def __init__(self, db: AsyncSession):
-        self.db = db
-        self.repo = CheckResultsRepository(db)
-        self.responsible_repo = ResponsibleRepository(db)
-        self.service_repo = ServiceRepository(db)
+    def __init__(self):
         self.notifier = Notifier()
 
         self._checker_timeout = settings.checker_timeout_seconds
@@ -36,49 +32,55 @@ class CheckEngine:
 
         self.last_down_time: Dict[int, datetime] = {}
 
-
     async def close(self) -> None:
         await self.client.aclose()
         logger.info("HTTP client closed")
 
-
     async def __aenter__(self):
         return self
-
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
 
-
     async def service(
         self,
         endpoint: Endpoint
-        ) -> CheckResultsResponse:
+        ) -> CheckResultsResponse | None:
 
         check_results = await self.check_endpoint(endpoint)
-        res = await self.repo.create(
-            {
-                "endpoint_id": endpoint.id,
-                "checked_at": check_results.checked_at,
-                "is_available": check_results.is_available,
-                "status_code": check_results.status_code,
-                "response_time_ms": check_results.response_time_ms,
-                "error_message": check_results.error_message,
-            }
-        )
-        logger.info(
-            "Check_results created",
-            endpoint_id=endpoint.id,
-            checked_at=check_results.checked_at,
-            is_available=check_results.is_available,
-            status_code=check_results.status_code,
-            response_time_ms=check_results.response_time_ms,
-            error_message=check_results.error_message,
-        )
 
-        await self.handle_notification(endpoint, res)
+        try:
+            async with AsyncSessionLocal() as session:
+                repo = CheckResultsRepository(session)
+                res = await repo.create(
+                    {
+                        "endpoint_id": endpoint.id,
+                        "checked_at": check_results.checked_at,
+                        "is_available": check_results.is_available,
+                        "status_code": check_results.status_code,
+                        "response_time_ms": check_results.response_time_ms,
+                        "error_message": check_results.error_message,
+                    }
+                )
+                logger.info(
+                    "Check_results created",
+                    endpoint_id=endpoint.id,
+                    checked_at=check_results.checked_at,
+                    is_available=check_results.is_available,
+                    status_code=check_results.status_code,
+                    response_time_ms=check_results.response_time_ms,
+                    error_message=check_results.error_message,
+                )
 
-        return res
+                await self.handle_notification(endpoint, res)
+
+                return res
+        except Exception:
+            logger.exception(
+                "Check DB write failed",
+                endpoint_id=endpoint.id,
+            )
+            return None
 
 
     async def handle_notification(
@@ -101,6 +103,7 @@ class CheckEngine:
 
         time_now = datetime.now(timezone.utc)
         last_down = self.last_down_time.get(endpoint.id)
+        time_diff: timedelta | None = None
 
         should_notify = False
 
@@ -118,14 +121,14 @@ class CheckEngine:
                 "DOWN notification sent to notifier",
                 endpoint_id=endpoint.id,
                 url=endpoint.url,
-                time_since_last=time_diff if last_down else None,
+                time_since_last=time_diff,
             )
         else:
             logger.debug(
                 "DOWN notification suppressed",
                 endpoint_id=endpoint.id,
                 url=endpoint.url,
-                time_since_last=time_now - last_down if last_down else None,
+                time_since_last=time_diff,
             )
 
 
@@ -151,10 +154,16 @@ class CheckEngine:
         check_results: CheckResultsResponse,
         status: str,
     ) -> None:
-        service_name = await self.get_service_name(endpoint.service_id)
-        responsible_list = await self.get_responsible_email(endpoint.service_id)
+        async with AsyncSessionLocal() as session:
+            responsible_repo = ResponsibleRepository(session)
+            service_repo = ServiceRepository(session)
+            service = await service_repo.get_by_id(endpoint.service_id)
+            service_name = service.name if service else "Unknown Service"
+            responsible_list = await responsible_repo.list_by_service(endpoint.service_id)
 
-        if not responsible_list:
+        emails = [r.email for r in responsible_list] if responsible_list else []
+
+        if not emails:
             logger.warning(
                 "Responsible is empty, email sending is impossible",
                 status=status,
@@ -168,32 +177,12 @@ class CheckEngine:
             check_results,
             status,
             service_name,
-            responsible_list)
+            emails)
 
         logger.debug(
             "Notifier finished",
             result=res
         )
-
-
-    async def get_responsible_email(
-        self,
-        service_id: int
-    ) -> List[str]:
-        responsible_list = await self.responsible_repo.list_by_service(service_id)
-
-        return [r.email for r in responsible_list] if responsible_list else []
-
-
-    async def get_service_name(
-        self,
-        service_id: int
-    ) -> str:
-        service = await self.service_repo.get_by_id(service_id)
-        if not service:
-            logger.warning("Service not found", service_id=service_id)
-            return "Unknown Service"
-        return service.name
 
 
     async def check_endpoint(
@@ -281,8 +270,7 @@ class CheckEngine:
                 error_message=f"Unexpected error {str(e)}",
             )
 
-        try:
-            response.raise_for_status()
+        if 200 <= response.status_code < 400:
             return RequestResult(
                 checked_at=start_time,
                 is_available=True,
@@ -290,11 +278,11 @@ class CheckEngine:
                 response_time_ms=response_time_ms,
                 error_message=None,
             )
-        except httpx.HTTPStatusError as e:
+        else:
             return RequestResult(
                 checked_at=start_time,
                 is_available=False,
-                status_code=e.response.status_code,
+                status_code=response.status_code,
                 response_time_ms=response_time_ms,
-                error_message=f"HTTP {e.response.status_code}",
+                error_message=f"HTTP {response.status_code}",
             )

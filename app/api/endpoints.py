@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, status
 from app.api.deps import get_endpoint_service
 from app.schemas.endpoints import EndpointResponse, EndpointUpdateRequest
 from app.services.endpoint_service import EndpointService
+from app.scheduler.scheduler import scheduler_manager
 
 router = APIRouter(prefix="/endpoints", tags=["endpoints"])
 
@@ -15,7 +16,9 @@ async def update_endpoint(
     data: EndpointUpdateRequest,
     endpoint: EndpointService = Depends(get_endpoint_service),
 ) -> Any:
-    return await endpoint.update(endpoint_id, data)
+    result = await endpoint.update(endpoint_id, data)
+    await scheduler_manager.refresh_jobs()
+    return result
 
 
 @router.delete("/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -24,3 +27,4 @@ async def delete_endpoint(
     endpoint: EndpointService = Depends(get_endpoint_service),
 ) -> None:
     await endpoint.delete(endpoint_id)
+    await scheduler_manager.refresh_jobs()

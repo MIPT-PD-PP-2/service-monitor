@@ -14,31 +14,28 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 @pytest.fixture
 async def e2e_engine(db_session):
-    """CheckEngine с реальной БД, замоканными HTTP-клиентом и Notifier."""
-    engine = CheckEngine(db_session)
-    engine.client = AsyncMock()
-    engine.notifier = AsyncMock()
-    yield engine
-    await engine.close()
+    """CheckEngine с замоканным AsyncSessionLocal, HTTP-клиентом и Notifier."""
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=db_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.checker.engine.AsyncSessionLocal", return_value=mock_cm):
+        engine = CheckEngine()
+        engine.client = AsyncMock()
+        engine.notifier = AsyncMock()
+        yield engine
+        await engine.close()
 
 
 def _mock_http_ok(status_code: int = 200) -> MagicMock:
     response = MagicMock()
     response.status_code = status_code
-    response.raise_for_status = MagicMock()
     return response
 
 
 def _mock_http_error(status_code: int = 500) -> MagicMock:
     response = MagicMock()
     response.status_code = status_code
-    response.raise_for_status = MagicMock(
-        side_effect=httpx.HTTPStatusError(
-            f"{status_code}",
-            request=MagicMock(),
-            response=response,
-        )
-    )
     return response
 
 

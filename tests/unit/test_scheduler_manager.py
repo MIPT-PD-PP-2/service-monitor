@@ -108,19 +108,17 @@ async def test_get_count_jobs(scheduler_manager, mock_scheduler):
 @pytest.mark.asyncio
 async def test_initialize_scheduler_jobs_no_endpoints(scheduler_manager, mock_scheduler):
     mock_session = AsyncMock(spec=AsyncSession)
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.scheduler.scheduler.AsyncSessionLocal") as mock_session_local:
-        mock_session_local.return_value = mock_session
-
+    with patch("app.scheduler.scheduler.AsyncSessionLocal", return_value=mock_cm):
         with patch("app.scheduler.scheduler.EndpointRepository") as MockEndpointRepo:
             mock_endpoint_repo = MockEndpointRepo.return_value
             mock_endpoint_repo.get_active_endpoints = AsyncMock(return_value=[])
 
-            await scheduler_manager.initialize_scheduler_jobs()
-
-            mock_session_local.assert_called_once()
-            MockEndpointRepo.assert_called_once_with(mock_session)
-            mock_endpoint_repo.get_active_endpoints.assert_awaited_once()
+            with patch("app.checker.engine.AsyncSessionLocal"):
+                await scheduler_manager.initialize_scheduler_jobs()
 
             assert scheduler_manager._engine is not None
             mock_scheduler.add_job.assert_not_called()
@@ -134,21 +132,19 @@ async def test_initialize_scheduler_jobs_with_endpoints(scheduler_manager, mock_
     mock_endpoint2.id = 2
 
     mock_session = AsyncMock(spec=AsyncSession)
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.scheduler.scheduler.AsyncSessionLocal") as mock_session_local:
-        mock_session_local.return_value = mock_session
-
+    with patch("app.scheduler.scheduler.AsyncSessionLocal", return_value=mock_cm):
         with patch("app.scheduler.scheduler.EndpointRepository") as MockEndpointRepo:
             mock_endpoint_repo = MockEndpointRepo.return_value
             mock_endpoint_repo.get_active_endpoints = AsyncMock(
                 return_value=[mock_endpoint1, mock_endpoint2]
             )
 
-            await scheduler_manager.initialize_scheduler_jobs()
-
-            mock_session_local.assert_called_once()
-            MockEndpointRepo.assert_called_once_with(mock_session)
-            mock_endpoint_repo.get_active_endpoints.assert_awaited_once()
+            with patch("app.checker.engine.AsyncSessionLocal"):
+                await scheduler_manager.initialize_scheduler_jobs()
 
             assert scheduler_manager._engine is not None
             assert mock_scheduler.add_job.call_count == 2

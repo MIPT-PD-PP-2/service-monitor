@@ -16,23 +16,15 @@ def mock_db():
 
 
 @pytest.fixture
-def check_engine(mock_db):
-    """Создает экземпляр CheckEngine с замоканной БД"""
-    with patch("app.checker.engine.CheckResultsRepository") as MockCheckRepo, \
-         patch("app.checker.engine.ResponsibleRepository") as MockRespRepo, \
-         patch("app.checker.engine.ServiceRepository") as MockSvcRepo:
-        MockCheckRepo.return_value = AsyncMock()
-        MockRespRepo.return_value = AsyncMock()
-        MockSvcRepo.return_value = AsyncMock()
-        engine = CheckEngine(mock_db)
-        engine.repo = AsyncMock()
+def check_engine():
+    with patch("app.checker.engine.AsyncSessionLocal"):
+        engine = CheckEngine()
         engine.client = AsyncMock()
         return engine
 
 
 @pytest.fixture
 def sample_endpoint():
-    """Создает тестовый эндпоинт"""
     service = MagicMock(spec=Service)
     service.id = 1
     service.name = "Test Service"
@@ -45,11 +37,9 @@ def sample_endpoint():
     return endpoint
 
 
-def test_init_default_values(mock_db):
-    with patch("app.checker.engine.CheckResultsRepository"), \
-         patch("app.checker.engine.ResponsibleRepository"), \
-         patch("app.checker.engine.ServiceRepository"):
-        engine = CheckEngine(mock_db)
+def test_init_default_values():
+    with patch("app.checker.engine.AsyncSessionLocal"):
+        engine = CheckEngine()
         assert engine._checker_timeout == 10
         assert engine._notify_repeat_minutes == 30
         assert engine.last_down_time == {}
@@ -99,7 +89,6 @@ async def test_send_request_success_200(check_engine):
     with patch.object(check_engine.client, "get") as mock_get:
         mock_response = AsyncMock()
         mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
         result = await check_engine.send_request("http://test.com")
@@ -115,7 +104,6 @@ async def test_send_request_success_302(check_engine):
     with patch.object(check_engine.client, "get") as mock_get:
         mock_response = AsyncMock()
         mock_response.status_code = 302
-        mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
         result = await check_engine.send_request("http://test.com")
@@ -128,9 +116,6 @@ async def test_send_request_404_error(check_engine):
     with patch.object(check_engine.client, "get") as mock_get:
         mock_response = AsyncMock()
         mock_response.status_code = 404
-        mock_response.raise_for_status = MagicMock(
-            side_effect=httpx.HTTPStatusError("404", request=MagicMock(), response=mock_response)
-        )
         mock_get.return_value = mock_response
 
         result = await check_engine.send_request("http://test.com")
@@ -167,7 +152,6 @@ async def test_send_request_response_time_calculation(check_engine):
     with patch.object(check_engine.client, "get") as mock_get:
         mock_response = AsyncMock()
         mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
         result = await check_engine.send_request("http://test.com")
@@ -196,14 +180,21 @@ async def test_service_success(check_engine, sample_endpoint):
     mock_db_result.response_time_ms = 150
     mock_db_result.error_message = None
 
-    with patch.object(check_engine, "check_endpoint", return_value=mock_check_result):
-        with patch.object(check_engine.repo, "create", return_value=mock_db_result):
-            with patch.object(check_engine, "handle_notification") as mock_notify:
-                result = await check_engine.service(sample_endpoint)
+    mock_repo = AsyncMock()
+    mock_repo.create = AsyncMock(return_value=mock_db_result)
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
 
-                assert result == mock_db_result
-                check_engine.repo.create.assert_called_once()
-                mock_notify.assert_called_once_with(sample_endpoint, mock_db_result)
+    with patch.object(check_engine, "check_endpoint", return_value=mock_check_result):
+        with patch.object(check_engine, "handle_notification") as mock_notify:
+            with patch("app.checker.engine.AsyncSessionLocal", return_value=mock_session):
+                with patch("app.checker.engine.CheckResultsRepository", return_value=mock_repo):
+                    result = await check_engine.service(sample_endpoint)
+
+                    assert result == mock_db_result
+                    mock_repo.create.assert_called_once()
+                    mock_notify.assert_called_once_with(sample_endpoint, mock_db_result)
 
 
 async def test_handle_notification_down(check_engine, sample_endpoint):

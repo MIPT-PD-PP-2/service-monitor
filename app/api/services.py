@@ -16,6 +16,7 @@ from app.services.endpoint_service import EndpointService
 from app.services.responsible_service import ResponsibleService
 from app.services.service_service import ServiceService
 from app.services.sla_config_service import SlaConfigService
+from app.scheduler.scheduler import scheduler_manager
 
 router = APIRouter(prefix="/services", tags=["services"])
 
@@ -49,6 +50,7 @@ async def delete_service(
     service: ServiceService = Depends(get_service_service),
 ) -> None:
     await service.delete(service_id)
+    await scheduler_manager.refresh_jobs()
 
 
 @router.post(
@@ -61,7 +63,9 @@ async def create_endpoint(
     data: EndpointRequest,
     endpoint: EndpointService = Depends(get_endpoint_service),
 ) -> Any:
-    return await endpoint.create_for_service(service_id, data)
+    result = await endpoint.create_for_service(service_id, data)
+    await scheduler_manager.refresh_jobs()
+    return result
 
 
 @router.get("/{service_id}/endpoints", response_model=list[EndpointResponse])

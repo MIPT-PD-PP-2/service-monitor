@@ -18,8 +18,7 @@ logger = structlog.get_logger()
 class SchedulerManager:
     def __init__(self) -> None:
         self._scheduler = AsyncIOScheduler()
-        self._engine = None
-        self._session = None
+        self._engine: Optional[CheckEngine] = None
 
     def is_running(self) -> bool:
         return self._scheduler.running
@@ -41,13 +40,8 @@ class SchedulerManager:
         if self._engine:
             await self._engine.close()
             self._engine = None
-
-        if self._session:
-            await self._session.close()
-            self._session = None
         logger.info("scheduler_stopped")
 
-    # Немедленный запуск всех задач проверок
     def trigger_now(self) -> None:
         now = datetime.now(timezone.utc)
         for job in self._scheduler.get_jobs():
@@ -60,7 +54,6 @@ class SchedulerManager:
             return None
         return min((j.next_run_time for j in jobs if j.next_run_time), default=None)
 
-    # Добавление периодической задачи для проверки с интервалом
     def add_periodic_job(
         self, func: Callable, job_id: str, interval_seconds: Optional[int] = None
     ) -> None:
@@ -71,7 +64,6 @@ class SchedulerManager:
         self._scheduler.add_job(func, trigger=interval_trigger, id=job_id, replace_existing=True)
         logger.info("periodic_job_added", job_id=job_id, interval_seconds=interval_seconds)
 
-    # Удаление периодической задачи
     def remove_job(self, job_id: str) -> None:
         try:
             self._scheduler.remove_job(job_id)
@@ -79,34 +71,58 @@ class SchedulerManager:
         except KeyError:
             logger.warning("job_not_found", job_id=job_id)
 
-    # Подсчет количества задач проверок эндпоинтов
     def get_count_jobs(self) -> int:
         return sum(1 for j in self._scheduler.get_jobs() if j.id.startswith("check_endpoint_"))
 
-    # Инициализация списка задач — проверок активных эндпоинтов
     async def initialize_scheduler_jobs(self) -> None:
-        self._session = AsyncSessionLocal()
-        self._engine = CheckEngine(self._session)
+        self._engine = CheckEngine()
+        await self._sync_jobs_with_db()
 
-        endpoint_repo = EndpointRepository(self._session)
-        active_endpoints = await endpoint_repo.get_active_endpoints()
+    async def _sync_jobs_with_db(self) -> None:
+        if not self._engine:
+            return
+
+        async with AsyncSessionLocal() as session:
+            endpoint_repo = EndpointRepository(session)
+            active_endpoints = await endpoint_repo.get_active_endpoints()
+
+        self._reconcile_jobs(active_endpoints)
+        logger.info("scheduler_jobs_synced", total=len(active_endpoints))
+
+    async def refresh_jobs(self) -> None:
+        async with AsyncSessionLocal() as session:
+            endpoint_repo = EndpointRepository(session)
+            active_endpoints = await endpoint_repo.get_active_endpoints()
+
+        self._reconcile_jobs(active_endpoints)
+        logger.info("scheduler_jobs_refreshed", total=len(active_endpoints))
+
+    def _reconcile_jobs(self, active_endpoints: list[Endpoint]) -> None:
+        if not self._engine:
+            return
+
+        current_job_ids = {
+            j.id for j in self._scheduler.get_jobs() if j.id.startswith("check_endpoint_")
+        }
+        active_ids = {f"check_endpoint_{ep.id}" for ep in active_endpoints}
+
+        for job_id in current_job_ids - active_ids:
+            self.remove_job(job_id)
 
         for endpoint in active_endpoints:
+            job_id = f"check_endpoint_{endpoint.id}"
+            if job_id not in current_job_ids:
 
-            def make_check_job(endpoint: Endpoint) -> Callable:
-                async def check_job() -> None:
-                    await self._engine.service(endpoint)
-                return check_job
+                def make_check_job(ep: Endpoint) -> Callable:
+                    async def check_job() -> None:
+                        await self._engine.service(ep)
+                    return check_job
 
-            check_job_func = make_check_job(endpoint)
-
-            self.add_periodic_job(
-                func=check_job_func,
-                job_id=f"check_endpoint_{endpoint.id}",
-                interval_seconds=self.get_interval(),
-            )
-
-        logger.info("active_endpoints_registered", count=len(active_endpoints))
+                self.add_periodic_job(
+                    func=make_check_job(endpoint),
+                    job_id=job_id,
+                    interval_seconds=self.get_interval(),
+                )
 
 
 scheduler_manager = SchedulerManager()
