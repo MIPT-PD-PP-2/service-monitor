@@ -34,6 +34,30 @@ async def test_create_service_empty_name(client):
     assert response.status_code == 422
 
 
+async def test_create_service_duplicate_name_allowed(client):
+    """Создание сервиса с дублирующимся именем.
+    
+    Примечание: В текущей реализации уникальность имени не enforced на уровне БД,
+    поэтому дубликаты разрешены. Если в будущем добавится unique-констрейнт,
+    этот тест нужно будет обновить (ожидать 409 вместо 201).
+    """
+    payload = {"name": "Duplicate Service", "description": "First instance"}
+    
+    response1 = await client.post("/services", json=payload)
+    assert response1.status_code == 201
+    service1_id = response1.json()["id"]
+    
+    response2 = await client.post("/services", json=payload)
+    assert response2.status_code == 201
+    service2_id = response2.json()["id"]
+    
+    assert service1_id != service2_id
+    
+    list_response = await client.get("/services")
+    names = [s["name"] for s in list_response.json()]
+    assert names.count("Duplicate Service") == 2
+
+
 async def test_list_services_empty(client):
     response = await client.get("/services")
     assert response.status_code == 200

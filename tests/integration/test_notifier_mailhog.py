@@ -1,22 +1,24 @@
-# tests/integration/test_notifier_mailhog.py
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 
-from app.config import settings
 from app.models.models import Endpoint, Service
 from app.notifier.notifier import Notifier
 from app.schemas.check_results import CheckResultsResponse
 
-settings.smtp_host = "127.0.0.1"
-settings.smtp_port = 1025
 
 @pytest.fixture
 def notifier():
-    return Notifier()
+    with patch("app.notifier.notifier.settings") as mock_settings:
+        mock_settings.smtp_host = "127.0.0.1"
+        mock_settings.smtp_port = 1025
+        mock_settings.smtp_from = "monitoring@company.ru"
+        mock_settings.smtp_user = ""
+        mock_settings.smtp_password = ""
+        yield Notifier()
 
 
 @pytest.fixture
@@ -44,15 +46,6 @@ def check_result():
         response_time_ms=150,
         error_message="HTTP 500",
     )
-
-
-# Вспомогательные фикстуры для работы с MailHog
-@pytest.fixture
-def mailhog_client():
-    import httpx
-
-    client = httpx.AsyncClient(base_url="http://localhost:8025")
-    yield client
 
 
 @pytest.mark.asyncio
@@ -150,4 +143,3 @@ async def test_mailhog_received_emails(notifier, mock_endpoint, check_result):
                 break
 
         assert found, "Email not found in MailHog"
-

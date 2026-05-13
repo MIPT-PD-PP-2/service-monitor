@@ -1,3 +1,4 @@
+import asyncio
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -21,7 +22,6 @@ class Notifier:
         self.smtp_user = settings.smtp_user
         self.smtp_password = settings.smtp_password
 
-
     async def send_notification(
         self,
         endpoint: Endpoint,
@@ -29,7 +29,7 @@ class Notifier:
         status: str,
         service_name: str,
         responsible_list: List[str],
-    ):
+    ) -> str:
         if status == "DOWN":
             subject = f"[ALERT] {service_name} is DOWN"
             body = self.format_down_message(endpoint, check_result, service_name)
@@ -41,11 +41,10 @@ class Notifier:
 
         return res
 
-
     @staticmethod
     def format_down_message(
         endpoint: Endpoint, check_results: CheckResultsResponse, service_name: str
-    ):
+    ) -> str:
         time_str = check_results.checked_at.strftime("%Y-%m-%d %H:%M:%S UTC")
 
         if check_results.status_code:
@@ -70,11 +69,10 @@ Please investigate the issue.
 This is an automated message from Service Monitor.
 """
 
-
     @staticmethod
     def format_up_message(
         endpoint: Endpoint, check_results: CheckResultsResponse, service_name: str
-    ):
+    ) -> str:
         time_str = check_results.checked_at.strftime("%Y-%m-%d %H:%M:%S UTC")
 
         return f"""Service Monitor Alert - Service RECOVERED
@@ -91,29 +89,38 @@ The service is back online.
 This is an automated message from Service Monitor.
 """
 
-
     async def send_email(self, responsible_list: List[str], subject: str, body: str) -> str:
         emails: List[str] = []
-
-        for to_email in responsible_list:
-            try:
-                msg = MIMEMultipart()
-                msg["From"] = self.smtp_from
-                msg["To"] = to_email
-                msg["Subject"] = subject
-                msg.attach(MIMEText(body, "plain", "utf-8"))
-
-                with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
-                    if self.smtp_user and self.smtp_password:
-                        server.starttls()
-                        server.login(self.smtp_user, self.smtp_password)
-                    server.send_message(msg)
-
-                logger.info("Email sent", to=to_email, subject=subject)
-                emails.append(to_email)
-
-            except Exception as e:
-                logger.error("Email send failed", to=to_email, error=str(e))
-
-
+        await asyncio.to_thread(
+            self._send_emails_sync, responsible_list, subject, body, emails
+        )
         return f"Notification sent to: {', '.join(emails)}"
+
+    def _send_emails_sync(
+        self,
+        responsible_list: List[str],
+        subject: str,
+        body: str,
+        emails: List[str],
+    ) -> None:
+        try:
+            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+                if self.smtp_user and self.smtp_password:
+                    server.starttls()
+                    server.login(self.smtp_user, self.smtp_password)
+
+                for to_email in responsible_list:
+                    try:
+                        msg = MIMEMultipart()
+                        msg["From"] = self.smtp_from
+                        msg["To"] = to_email
+                        msg["Subject"] = subject
+                        msg.attach(MIMEText(body, "plain", "utf-8"))
+                        server.send_message(msg)
+
+                        logger.info("Email sent", to=to_email, subject=subject)
+                        emails.append(to_email)
+                    except Exception as e:
+                        logger.error("Email send failed", to=to_email, error=str(e))
+        except Exception as e:
+            logger.error("SMTP connection failed", error=str(e))

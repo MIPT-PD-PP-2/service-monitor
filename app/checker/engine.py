@@ -21,6 +21,8 @@ class CheckEngine:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = CheckResultsRepository(db)
+        self.responsible_repo = ResponsibleRepository(db)
+        self.service_repo = ServiceRepository(db)
         self.notifier = Notifier()
 
         self._checker_timeout = settings.checker_timeout_seconds
@@ -152,7 +154,7 @@ class CheckEngine:
         service_name = await self.get_service_name(endpoint.service_id)
         responsible_list = await self.get_responsible_email(endpoint.service_id)
 
-        if responsible_list is None:
+        if not responsible_list:
             logger.warning(
                 "Responsible is empty, email sending is impossible",
                 status=status,
@@ -168,7 +170,7 @@ class CheckEngine:
             service_name,
             responsible_list)
 
-        logger.info(
+        logger.debug(
             "Notifier finished",
             result=res
         )
@@ -178,8 +180,7 @@ class CheckEngine:
         self,
         service_id: int
     ) -> List[str]:
-        responsible_repo = ResponsibleRepository(self.db)
-        responsible_list = await responsible_repo.list_by_service(service_id)
+        responsible_list = await self.responsible_repo.list_by_service(service_id)
 
         return [r.email for r in responsible_list] if responsible_list else []
 
@@ -188,9 +189,7 @@ class CheckEngine:
         self,
         service_id: int
     ) -> str:
-        service_repo = ServiceRepository(self.db)
-
-        service = await service_repo.get_by_id(service_id)
+        service = await self.service_repo.get_by_id(service_id)
         if not service:
             logger.warning("Service not found", service_id=service_id)
             return "Unknown Service"
