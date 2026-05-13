@@ -6,7 +6,7 @@ import pytest
 
 from app.checker.engine import CheckEngine
 from app.models.models import Endpoint, Service
-from app.schemas.check_results import CheckResultsCreate, RequestResult
+from app.schemas.check_results import CheckResultsCreate, CheckResultsResponse, RequestResult
 
 
 @pytest.fixture
@@ -18,11 +18,14 @@ def mock_db():
 @pytest.fixture
 def check_engine(mock_db):
     """Создает экземпляр CheckEngine с замоканной БД"""
-    with patch("app.checker.engine.CheckResultsRepository") as MockRepo:
-        MockRepo.return_value = AsyncMock()
+    with patch("app.checker.engine.CheckResultsRepository") as MockCheckRepo, \
+         patch("app.checker.engine.ResponsibleRepository") as MockRespRepo, \
+         patch("app.checker.engine.ServiceRepository") as MockSvcRepo:
+        MockCheckRepo.return_value = AsyncMock()
+        MockRespRepo.return_value = AsyncMock()
+        MockSvcRepo.return_value = AsyncMock()
         engine = CheckEngine(mock_db)
         engine.repo = AsyncMock()
-        # Мокаем HTTP клиент, чтобы не создавать реальный
         engine.client = AsyncMock()
         return engine
 
@@ -43,10 +46,13 @@ def sample_endpoint():
 
 
 def test_init_default_values(mock_db):
-    engine = CheckEngine(mock_db)
-    assert engine._checker_timeout == 10
-    assert engine._notify_repeat_minutes == 30
-    assert engine.last_down_time == {}
+    with patch("app.checker.engine.CheckResultsRepository"), \
+         patch("app.checker.engine.ResponsibleRepository"), \
+         patch("app.checker.engine.ServiceRepository"):
+        engine = CheckEngine(mock_db)
+        assert engine._checker_timeout == 10
+        assert engine._notify_repeat_minutes == 30
+        assert engine.last_down_time == {}
 
 
 async def test_check_endpoint_success(check_engine, sample_endpoint):
@@ -181,8 +187,14 @@ async def test_service_success(check_engine, sample_endpoint):
         error_message=None,
     )
 
-    mock_db_result = MagicMock()
+    mock_db_result = MagicMock(spec=CheckResultsResponse)
     mock_db_result.id = 1
+    mock_db_result.endpoint_id = 1
+    mock_db_result.checked_at = datetime.now(timezone.utc)
+    mock_db_result.is_available = True
+    mock_db_result.status_code = 200
+    mock_db_result.response_time_ms = 150
+    mock_db_result.error_message = None
 
     with patch.object(check_engine, "check_endpoint", return_value=mock_check_result):
         with patch.object(check_engine.repo, "create", return_value=mock_db_result):
@@ -191,7 +203,7 @@ async def test_service_success(check_engine, sample_endpoint):
 
                 assert result == mock_db_result
                 check_engine.repo.create.assert_called_once()
-                mock_notify.assert_called_once_with(sample_endpoint, mock_check_result)
+                mock_notify.assert_called_once_with(sample_endpoint, mock_db_result)
 
 
 async def test_handle_notification_down(check_engine, sample_endpoint):
