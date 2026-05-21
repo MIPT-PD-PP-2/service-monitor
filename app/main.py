@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from app.api import endpoints, monitoring, reports, responsible, services
 from app.scheduler import scheduler_manager
+from app.api import sla
 
 
 @asynccontextmanager
@@ -29,6 +30,7 @@ app.include_router(services.router)
 app.include_router(monitoring.router)
 app.include_router(endpoints.router)
 app.include_router(responsible.router)
+app.include_router(sla.router)
 
 
 @app.get("/health", tags=["system"])
